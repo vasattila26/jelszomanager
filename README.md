@@ -1,0 +1,2 @@
+# jelszomanager
+Jelszó_Tároló
