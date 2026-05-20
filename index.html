@@ -91,7 +91,7 @@
 <script>
 let pyodide = null;
 
-// --- A JAVÍTOTT, TISZTA STRING-ALAPÚ PYTHON KÓD ---
+// --- IDŐTÁLLÓ PYTHON KRIPTOGRÁFIAI KÓD ---
 const pythonCode = `
 import base64
 import secrets
@@ -151,6 +151,16 @@ def titkosit_uj_adat_str(mester_jelszo, kulcs_b64, db_b64, uj_sor_szoveg):
     return base64.b64encode(eredmeny).decode('utf-8')
 `;
 
+// Biztonságos Uint8Array -> Base64 konvertáló ciklus (iOS kompatibilis)
+function safeUint8ToBase64(arr) {
+    let binary = '';
+    const len = arr.byteLength;
+    for (let i = 0; i < len; i++) {
+        binary += String.fromCharCode(arr[i]);
+    }
+    return btoa(binary);
+}
+
 async function initPython() {
     try {
         pyodide = await loadPyodide();
@@ -176,10 +186,10 @@ async function handleLogin() {
     const password = document.getElementById("master-pass").value;
     if (!password) { alert("Kérlek adj meg egy mesterjelszót!"); return; }
 
-    // Ha teljesen új a fiók, generálunk egy kulcsot tiszta szöveges formátumban
+    // HA ÚJ A FIÓK - Az iOS-barát generátor hívása
     if (!localStorage.getItem("pyspef_str_key")) {
         const secureBytes = crypto.getRandomValues(new Uint8Array(32));
-        let b64Key = btoa(String.fromCharCode.apply(null, secureBytes));
+        let b64Key = safeUint8ToBase64(secureBytes);
         localStorage.setItem("pyspef_str_key", b64Key);
         localStorage.setItem("pyspef_str_db", "");
     }
@@ -188,8 +198,11 @@ async function handleLogin() {
     const dbB64 = localStorage.getItem("pyspef_str_db");
 
     try {
-        // TISZTA STRING ALAPÚ MEGHÍVÁS - Ez nem bukhat el az iPhone-on!
-        let pythonResult = await pyodide.runPythonAsync(`visszafejt_fajl_str("${password.replace(/"/g, '\\"')}", "${keyB64}", "${dbB64}")`);
+        pyodide.globals.set("py_pass_login", password);
+        pyodide.globals.set("py_key_login", keyB64);
+        pyodide.globals.set("py_db_login", dbB64);
+
+        let pythonResult = await pyodide.runPythonAsync("visszafejt_fajl_str(py_pass_login, py_key_login, py_db_login)");
         
         if (pythonResult === "HIBA") {
             alert("Hozzáférés megtagadva! Rossz jelszó.");
@@ -235,7 +248,6 @@ async function handleSave() {
     const keyB64 = localStorage.getItem("pyspef_str_key");
     const dbB64 = localStorage.getItem("pyspef_str_db");
 
-    // Biztonságos string injektálás a Pythonba
     pyodide.globals.set("py_pass", password);
     pyodide.globals.set("py_key", keyB64);
     pyodide.globals.set("py_db", dbB64);
