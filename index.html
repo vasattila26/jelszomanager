@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Python Jelszókezelő PWA</title>
+    <link rel="manifest" href="manifest.json">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <link rel="apple-touch-icon" href="icon.png">
+    
+    <!-- PYODIDE (Python a böngészőben) BETÖLTÉSE -->
+    <script src="https://cdn.jsdelivr.net/pyodide/v0.25.0/full/pyodide.js"></script>
+
+    <style>
+        :root { --bg: #f5f7fa; --card: #ffffff; --text: #1a202c; --primary: #3182ce; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 15px; display: flex; justify-content: center; }
+        .container { width: 100%; max-width: 400px; background: var(--card); padding: 20px; border-radius: 16px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); box-sizing: border-box; }
+        h2, h3 { text-align: center; margin-top: 0; color: #2d3748; }
+        .section { border-top: 1px solid #e2e8f0; padding-top: 15px; margin-top: 15px; }
+        label { display: block; font-size: 14px; font-weight: 600; margin-bottom: 5px; color: #4a5568; }
+        input { width: 100%; padding: 10px; margin-bottom: 12px; border: 1px solid #cbd5e0; border-radius: 8px; box-sizing: border-box; font-size: 16px; }
+        .file-box { display: flex; gap: 5px; margin-bottom: 12px; }
+        .file-box input { margin-bottom: 0; }
+        button { width: 100%; padding: 12px; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; cursor: pointer; margin-bottom: 8px; }
+        .btn-primary { background: var(--primary); color: white; }
+        .btn-success { background: #38a169; color: white; }
+        .btn-secondary { background: #edf2f7; color: #4a5568; }
+        .hidden { display: none; }
+        #status { text-align: center; color: #718096; font-size: 14px; margin-bottom: 15px; font-weight: bold; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 14px; }
+        th, td { padding: 8px; border-bottom: 1px solid #e2e8f0; text-align: left; word-break: break-all; }
+        th { background: #f7fafc; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div id="status">🐍 Python motor inicializálása...</div>
+
+    <!-- LOGIN PANEL -->
+    <div id="login-panel" class="hidden">
+        <h2>Python Biztonsági Belépés</h2>
+        <label>Mesterjelszó</label>
+        <input type="password" id="master-pass" placeholder="••••••••">
+        
+        <label>Kulcsfájl (.key)</label>
+        <div class="file-box">
+            <input type="file" id="key-file" accept=".key">
+            <button class="btn-secondary" style="width:auto; white-space:nowrap;" onclick="runPythonCreateKey()">+ Új</button>
+        </div>
+
+        <label>Jelszófájl (.txt)</label>
+        <div class="file-box">
+            <input type="file" id="db-file" accept=".txt">
+            <button class="btn-secondary" style="width:auto; white-space:nowrap;" onclick="downloadBlankDb()">+ Új</button>
+        </div>
+
+        <button class="btn-primary" id="login-btn" onclick="handleLogin()">BELÉPÉS</button>
+    </div>
+
+    <!-- MAIN PANEL -->
+    <div id="main-panel" class="hidden">
+        <h2>Python Jelszókezelő</h2>
+        
+        <!-- Generáló -->
+        <div class="section">
+            <h3>Python Jelszó Generátor</h3>
+            <label>Hossz: <span id="length-val">16</span></label>
+            <input type="range" id="pass-length" min="8" max="64" value="16" oninput="document.getElementById('length-val').innerText=this.value">
+            <button class="btn-secondary" onclick="runPythonGeneratePassword()">Generálás</button>
+            <input type="text" id="gen-result" readonly style="text-align:center; font-weight:bold; background:#f7fafc;">
+        </div>
+
+        <!-- Mentés -->
+        <div class="section">
+            <h3>Új Jelszó Mentése</h3>
+            <label>Weboldal / App</label>
+            <input type="text" id="app-name" placeholder="pl. Facebook">
+            <label>Felhasználónév</label>
+            <input type="text" id="username" placeholder="user@email.com">
+            <button class="btn-success" onclick="handleSave()">Mentés Python-nal és Letöltés</button>
+        </div>
+
+        <!-- Lista -->
+        <div class="section">
+            <h3>Mentett Adatok</h3>
+            <div style="overflow-x:auto;">
+                <table id="vault-table">
+                    <thead><tr><th>Hely</th><th>User</th><th>Jelszó</th></tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let pyodide = null;
+let keyFileBytes = null;
+let dbFileBytes = null;
+
+// --- A BEÁGYAZOTT TISZTA PYTHON KÓD ---
+const pythonCode = `
+import base64
+import secrets
+import string
+from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from cryptography.hazmat.primitives import hashes
+
+def general_kulcs(mester_jelszo, kulcs_bájtok):
+    kdf = PBKDF2HMAC(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=kulcs_bájtok[:16],
+        iterations=100_000,
+    )
+    szarmaztatott = kdf.derive(mester_jelszo.encode('utf-8'))
+    return base64.urlsafe_b64encode(szarmaztatott)
+
+def jelszo_generator(hossz):
+    karakterek = string.ascii_letters + string.digits + "!?*@#$"
+    return ''.join(secrets.choice(karakterek) for _ in range(hossz))
+
+def visszafejt_fajl(mester_jelszo, kulcs_bájtok, fajl_bájtok):
+    kulcs = general_kulcs(mester_jelszo, kulcs_bájtok)
+    cipher = Fernet(kulcs)
+    
+    if len(fajl_bájtok) == 0:
+        return "[]"
+        
+    visszafejtett_sorok = []
+    sorok = fajl_bájtok.split(b'\\n')
+    for sor in sorok:
+        if sor.strip():
+            lefejtett = cipher.decrypt(sor).decode('utf-8')
+            visszafejtett_sorok.append(lefejtett)
+            
+    return "||".join(visszafejtett_sorok)
+
+def titkosit_uj_adat(mester_jelszo, kulcs_bájtok, regi_fajl_bájtok, uj_sor_szoveg):
+    kulcs = general_kulcs(mester_jelszo, kulcs_bájtok)
+    cipher = Fernet(kulcs)
+    
+    uj_titkositott_sor = cipher.encrypt(uj_sor_szoveg.encode('utf-8'))
+    
+    if len(regi_fajl_bájtok) > 0 and regi_fajl_bájtok.endswith(b'\\n'):
+        eredmeny = regi_fajl_bájtok + uj_titkositott_sor + b'\\n'
+    elif len(regi_fajl_bájtok) > 0:
+        eredmeny = regi_fajl_bájtok + b'\\n' + uj_titkositott_sor + b'\\n'
+    else:
+        eredmeny = uj_titkositott_sor + b'\\n'
+        
+    return base64.b64encode(eredmeny).decode('utf-8')
+`;
+
+// --- PYODIDE INICIALIZÁLÁS ---
+async function initPython() {
+    try {
+        pyodide = await loadPyodide();
+        await pyodide.loadPackage("micropip");
+        const micropip = pyodide.pyimport("micropip");
+        await micropip.install("cryptography");
+        
+        await pyodide.runPythonAsync(pythonCode);
+        
+        document.getElementById("status").style.display = "none";
+        document.getElementById("login-panel").classList.remove("hidden");
+    } catch (err) {
+        document.getElementById("status").innerText = "Hiba a Python betöltésekor.";
+        console.error(err);
+    }
+}
+
+document.getElementById("key-file").addEventListener("change", async (e) => {
+    if(e.target.files[0]) keyFileBytes = new Uint8Array(await e.target.files[0].arrayBuffer());
+});
+document.getElementById("db-file").addEventListener("change", async (e) => {
+    if(e.target.files[0]) dbFileBytes = new Uint8Array(await e.target.files[0].arrayBuffer());
+});
+
+async function handleLogin() {
+    const password = document.getElementById("master-pass").value;
+    if (!password || !keyFileBytes || !dbFileBytes) { alert("Minden mezőt tölts ki és tallózz!"); return; }
+
+    try {
+        pyodide.globals.set("js_master", password);
+        pyodide.globals.set("js_key_bytes", keyFileBytes);
+        pyodide.globals.set("js_db_bytes", dbFileBytes);
+
+        let pythonResult = await pyodide.runPythonAsync("visszafejt_fajl(js_master, js_key_bytes.to_py(), js_db_bytes.to_py())");
+        
+        const tbody = document.querySelector("#vault-table tbody");
+        tbody.innerHTML = "";
+        
+        if (pythonResult && pythonResult !== "[]") {
+            let sorok = pythonResult.split("||");
+            sorok.forEach(sor => {
+                let részek = sor.split(" | ");
+                if(részek.length === 3) {
+                    tbody.innerHTML += `<tr><td>${escapeHtml(részek[0])}</td><td>${escapeHtml(részek[1])}</td><td>${escapeHtml(részek[2])}</td></tr>`;
+                }
+            });
+        }
+
+        document.getElementById("login-panel").classList.add("hidden");
+        document.getElementById("main-panel").classList.remove("hidden");
+    } catch (e) {
+        alert("Hozzáférés megtagadva! Rossz jelszó vagy nem összeillő fájlok.");
+        console.error(e);
+    }
+}
+
+async function runPythonGeneratePassword() {
+    const hossz = parseInt(document.getElementById("pass-length").value);
+    let genPass = await pyodide.runPythonAsync(`jelszo_generator(${hossz})`);
+    document.getElementById("gen-result").value = genPass;
+}
+
+async function handleSave() {
+    const app = document.getElementById("app-name").value;
+    const user = document.getElementById("username").value;
+    const pass = document.getElementById("gen-result").value;
+    const password = document.getElementById("master-pass").value;
+
+    if (!app || !user || !pass) { alert("Tölts ki minden mezőt!"); return; }
+
+    const ujSorSzoveg = `${app} | ${user} | ${pass}`;
+
+    pyodide.globals.set("js_master", password);
+    pyodide.globals.set("js_key_bytes", keyFileBytes);
+    pyodide.globals.set("js_db_bytes", dbFileBytes);
+    pyodide.globals.set("js_uj_sor", ujSorSzoveg);
+
+    let b64Result = await pyodide.runPythonAsync("titkosit_uj_adat(js_master, js_key_bytes.to_py(), js_db_bytes.to_py(), js_uj_sor)");
+    
+    const binaryString = atob(b64Result);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+    }
+
+    dbFileBytes = bytes;
+    
+    const tbody = document.querySelector("#vault-table tbody");
+    tbody.innerHTML += `<tr><td>${escapeHtml(app)}</td><td>${escapeHtml(user)}</td><td>${escapeHtml(pass)}</td></tr>`;
+
+    const blob = new Blob([bytes], { type: "application/octet-stream" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "passwords.txt";
+    a.click();
+
+    document.getElementById("app-name").value = "";
+    document.getElementById("username").value = "";
+    document.getElementById("gen-result").value = "";
+    alert("Python titkosítás sikeres! A frissített passwords.txt letöltve.");
+}
+
+function runPythonCreateKey() {
+    const secureBytes = crypto.getRandomValues(new Uint8Array(32));
+    const blob = new Blob([secureBytes], { type: "application/octet-stream" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "secret.key";
+    a.click();
+}
+
+function downloadBlankDb() {
+    const blob = new Blob([""], { type: "text/plain" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "passwords.txt";
+    a.click();
+}
+
+function escapeHtml(str) {
+    return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js').catch(err => console.log("SW hiba", err));
+}
+
+initPython();
+</script>
+</body>
+</html>
