@@ -3,11 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Biztonságos Jelszókezelő</title>
+    <title>Python Jelszókezelő PWA</title>
     <link rel="manifest" href="manifest.json">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <link rel="apple-touch-icon" href="icon.png">
+    
+    <script src="https://cdn.jsdelivr.net/pyodide/v0.25.0/full/pyodide.js"></script>
 
     <style>
         :root { --bg: #f5f7fa; --card: #ffffff; --text: #1a202c; --primary: #3182ce; }
@@ -22,32 +24,39 @@
         .btn-success { background: #38a169; color: white; }
         .btn-secondary { background: #edf2f7; color: #4a5568; }
         .hidden { display: none; }
+        #status { text-align: center; color: #718096; font-size: 14px; margin-bottom: 15px; font-weight: bold; }
         table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 14px; }
         th, td { padding: 8px; border-bottom: 1px solid #e2e8f0; text-align: left; word-break: break-all; }
         th { background: #f7fafc; }
+        .info-box { background: #ebf8ff; color: #2b6cb0; padding: 10px; border-radius: 8px; font-size: 13px; margin-bottom: 15px; text-align: center; border: 1px solid #bee3f8; }
     </style>
 </head>
 <body>
 
 <div class="container">
+    <div id="status">🐍 Python motor inicializálása...</div>
+
     <!-- LOGIN PANEL -->
-    <div id="login-panel">
-        <h2>Biztonsági Belépés</h2>
+    <div id="login-panel" class="hidden">
+        <h2>Python Biztonsági Belépés</h2>
+        <div id="setup-info" class="info-box hidden">Első indítás: Adj meg egy Mesterjelszót, a Python legenerálja a biztonsági kulcsaidat!</div>
+        
         <label>Mesterjelszó</label>
         <input type="password" id="master-pass" placeholder="••••••••">
-        <button class="btn-primary" onclick="handleLogin()">BELÉPÉS / FIÓK LÉTREHOZÁSA</button>
+        
+        <button class="btn-primary" id="login-btn" onclick="handleLogin()">BELÉPÉS / FIÓK LÉTREHOZÁSA</button>
     </div>
 
     <!-- MAIN PANEL -->
     <div id="main-panel" class="hidden">
-        <h2>Jelszókezelő Széf</h2>
+        <h2>Python Jelszókezelő</h2>
         
         <!-- Generáló -->
         <div class="section">
-            <h3>Jelszó Generátor</h3>
+            <h3>Python Jelszó Generátor</h3>
             <label>Hossz: <span id="length-val">16</span></label>
             <input type="range" id="pass-length" min="8" max="64" value="16" oninput="document.getElementById('length-val').innerText=this.value">
-            <button class="btn-secondary" onclick="generatePassword()">Generálás</button>
+            <button class="btn-secondary" onclick="runPythonGeneratePassword()">Generálás</button>
             <input type="text" id="gen-result" readonly style="text-align:center; font-weight:bold; background:#f7fafc;">
         </div>
 
@@ -58,7 +67,7 @@
             <input type="text" id="app-name" placeholder="pl. Facebook">
             <label>Felhasználónév</label>
             <input type="text" id="username" placeholder="user@email.com">
-            <button class="btn-success" onclick="handleSave()">Biztonságos Mentés</button>
+            <button class="btn-success" onclick="handleSave()">Mentés Python-nal</button>
         </div>
 
         <!-- Lista -->
@@ -72,7 +81,7 @@
             </div>
         </div>
 
-        <!-- Mentés fájlba -->
+        <!-- Biztonsági mentés -->
         <div class="section">
             <button class="btn-secondary" onclick="exportBackup()">📥 Biztonsági mentés letöltése</button>
         </div>
@@ -80,134 +89,192 @@
 </div>
 
 <script>
-let derivedKey = null;
+let pyodide = null;
 
-// --- NATÍV IPHONE-BARÁT TITKOSÍTÁSI LOGIKA ---
-async function getKey(password, salt) {
-    const enc = new TextEncoder();
-    const keyMaterial = await crypto.subtle.importKey(
-        "raw", enc.encode(password), "PBKDF2", false, ["deriveKey"]
-    );
-    return crypto.subtle.deriveKey(
-        { name: "PBKDF2", salt: salt, iterations: 100000, hash: "SHA-256" },
-        keyMaterial,
-        { name: "AES-GCM", length: 256 },
-        false,
-        ["encrypt", "decrypt"]
-    );
+// --- IDŐTÁLLÓ PYTHON KRIPTOGRÁFIAI KÓD ---
+const pythonCode = `
+import base64
+import secrets
+import string
+from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from cryptography.hazmat.primitives import hashes
+
+def general_kulcs(mester_jelszo, kulcs_b64):
+    kulcs_bájtok = base64.b64decode(kulcs_b64.encode('utf-8'))
+    kdf = PBKDF2HMAC(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=kulcs_bájtok[:16],
+        iterations=100_000,
+    )
+    szarmaztatott = kdf.derive(mester_jelszo.encode('utf-8'))
+    return base64.urlsafe_b64encode(szarmaztatott)
+
+def jelszo_generator(hossz):
+    karakterek = string.ascii_letters + string.digits + "!?*@#$"
+    return ''.join(secrets.choice(karakterek) for _ in range(hossz))
+
+def visszafejt_fajl_str(mester_jelszo, kulcs_b64, db_b64):
+    if not db_b64:
+        return "[]"
+    try:
+        kulcs = general_kulcs(mester_jelszo, kulcs_b64)
+        cipher = Fernet(kulcs)
+        fajl_bájtok = base64.b64decode(db_b64.encode('utf-8'))
+        
+        visszafejtett_sorok = []
+        sorok = fajl_bájtok.split(b'\\n')
+        for sor in sorok:
+            if sor.strip():
+                lefejtett = cipher.decrypt(sor).decode('utf-8')
+                visszafejtett_sorok.append(lefejtett)
+                
+        return "||".join(visszafejtett_sorok)
+    except Exception as e:
+        return "HIBA"
+
+def titkosit_uj_adat_str(mester_jelszo, kulcs_b64, db_b64, uj_sor_szoveg):
+    kulcs = general_kulcs(mester_jelszo, kulcs_b64)
+    cipher = Fernet(kulcs)
+    
+    regi_fajl_bájtok = base64.b64decode(db_b64.encode('utf-8')) if db_b64 else b''
+    uj_titkositott_sor = cipher.encrypt(uj_sor_szoveg.encode('utf-8'))
+    
+    if len(regi_fajl_bájtok) > 0 and regi_fajl_bájtok.endswith(b'\\n'):
+        eredmeny = regi_fajl_bájtok + uj_titkositott_sor + b'\\n'
+    elif len(regi_fajl_bájtok) > 0:
+        eredmeny = regi_fajl_bájtok + b'\\n' + uj_titkositott_sor + b'\\n'
+    else:
+        eredmeny = uj_titkositott_sor + b'\\n'
+        
+    return base64.b64encode(eredmeny).decode('utf-8')
+`;
+
+// Biztonságos Uint8Array -> Base64 konvertáló ciklus (iOS kompatibilis)
+function safeUint8ToBase64(arr) {
+    let binary = '';
+    const len = arr.byteLength;
+    for (let i = 0; i < len; i++) {
+        binary += String.fromCharCode(arr[i]);
+    }
+    return btoa(binary);
+}
+
+async function initPython() {
+    try {
+        pyodide = await loadPyodide();
+        await pyodide.loadPackage("micropip");
+        const micropip = pyodide.pyimport("micropip");
+        await micropip.install("cryptography");
+        
+        await pyodide.runPythonAsync(pythonCode);
+        
+        document.getElementById("status").style.display = "none";
+        document.getElementById("login-panel").classList.remove("hidden");
+        
+        if(!localStorage.getItem("pyspef_str_key")) {
+            document.getElementById("setup-info").classList.remove("hidden");
+        }
+    } catch (err) {
+        document.getElementById("status").innerText = "Hiba a Python betöltésekor.";
+        console.error(err);
+    }
 }
 
 async function handleLogin() {
     const password = document.getElementById("master-pass").value;
-    if (!password) { alert("Adj meg egy jelszót!"); return; }
+    if (!password) { alert("Kérlek adj meg egy mesterjelszót!"); return; }
 
-    // Új fiók esetén legenerálja a sót
-    if (!localStorage.getItem("pyspef_native_salt")) {
-        const salt = crypto.getRandomValues(new Uint8Array(16));
-        localStorage.setItem("pyspef_native_salt", btoa(String.fromCharCode(...salt)));
-        localStorage.setItem("pyspef_native_db", "");
+    // HA ÚJ A FIÓK - Az iOS-barát generátor hívása
+    if (!localStorage.getItem("pyspef_str_key")) {
+        const secureBytes = crypto.getRandomValues(new Uint8Array(32));
+        let b64Key = safeUint8ToBase64(secureBytes);
+        localStorage.setItem("pyspef_str_key", b64Key);
+        localStorage.setItem("pyspef_str_db", "");
     }
 
-    const saltStr = localStorage.getItem("pyspef_native_salt");
-    const salt = Uint8Array.from(atob(saltStr), c => c.charCodeAt(0));
-    
+    const keyB64 = localStorage.getItem("pyspef_str_key");
+    const dbB64 = localStorage.getItem("pyspef_str_db");
+
     try {
-        derivedKey = await getKey(password, salt);
-        const dbStr = localStorage.getItem("pyspef_native_db");
+        pyodide.globals.set("py_pass_login", password);
+        pyodide.globals.set("py_key_login", keyB64);
+        pyodide.globals.set("py_db_login", dbB64);
+
+        let pythonResult = await pyodide.runPythonAsync("visszafejt_fajl_str(py_pass_login, py_key_login, py_db_login)");
         
+        if (pythonResult === "HIBA") {
+            alert("Hozzáférés megtagadva! Rossz jelszó.");
+            return;
+        }
+
         const tbody = document.querySelector("#vault-table tbody");
         tbody.innerHTML = "";
-
-        if (dbStr) {
-            const encryptedData = Uint8Array.from(atob(dbStr), c => c.charCodeAt(0));
-            const iv = encryptedData.slice(0, 12);
-            const data = encryptedData.slice(12);
-            
-            const decrypted = await crypto.subtle.decrypt(
-                { name: "AES-GCM", iv: iv }, derivedKey, data
-            );
-            
-            const decoded = new TextDecoder().decode(decrypted);
-            const sorok = JSON.parse(decoded);
-            
+        
+        if (pythonResult && pythonResult !== "[]") {
+            let sorok = pythonResult.split("||");
             sorok.forEach(sor => {
-                tbody.innerHTML += `<tr><td>${escapeHtml(sor.app)}</td><td>${escapeHtml(sor.user)}</td><td>${escapeHtml(sor.pass)}</td></tr>`;
+                let részek = sor.split(" | ");
+                if(részek.length === 3) {
+                    tbody.innerHTML += `<tr><td>${escapeHtml(részek[0])}</td><td>${escapeHtml(részek[1])}</td><td>${escapeHtml(részek[2])}</td></tr>`;
+                }
             });
         }
 
         document.getElementById("login-panel").classList.add("hidden");
         document.getElementById("main-panel").classList.remove("hidden");
     } catch (e) {
-        alert("Hibás jelszó vagy sérült adatbázis!");
+        alert("Hiba történt a futtatás során.");
         console.error(e);
     }
 }
 
-function generatePassword() {
+async function runPythonGeneratePassword() {
     const hossz = parseInt(document.getElementById("pass-length").value);
-    const karakterek = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!?*@#$";
-    const values = new Uint32Array(hossz);
-    crypto.getRandomValues(values);
-    let result = "";
-    for (let i = 0; i < hossz; i++) {
-        result += karakterek[values[i] % karakterek.length];
-    }
-    document.getElementById("gen-result").value = result;
+    let genPass = await pyodide.runPythonAsync(`jelszo_generator(${hossz})`);
+    document.getElementById("gen-result").value = genPass;
 }
 
 async function handleSave() {
     const app = document.getElementById("app-name").value;
     const user = document.getElementById("username").value;
     const pass = document.getElementById("gen-result").value;
+    const password = document.getElementById("master-pass").value;
 
     if (!app || !user || !pass) { alert("Tölts ki minden mezőt!"); return; }
 
-    // Aktuális adatok betöltése
-    let sorok = [];
-    const dbStr = localStorage.getItem("pyspef_native_db");
-    if (dbStr) {
-        const encryptedData = Uint8Array.from(atob(dbStr), c => c.charCodeAt(0));
-        const iv = encryptedData.slice(0, 12);
-        const data = encryptedData.slice(12);
-        const decrypted = await crypto.subtle.decrypt({ name: "AES-GCM", iv: iv }, derivedKey, data);
-        sorok = JSON.parse(new TextDecoder().decode(decrypted));
-    }
+    const ujSorSzoveg = `${app} | ${user} | ${pass}`;
+    const keyB64 = localStorage.getItem("pyspef_str_key");
+    const dbB64 = localStorage.getItem("pyspef_str_db");
 
-    // Új adat hozzáadása
-    sorok.push({ app, user, pass });
+    pyodide.globals.set("py_pass", password);
+    pyodide.globals.set("py_key", keyB64);
+    pyodide.globals.set("py_db", dbB64);
+    pyodide.globals.set("py_ujsor", ujSorSzoveg);
 
-    // Újra-titkosítás
-    const enc = new TextEncoder();
-    const iv = crypto.getRandomValues(new Uint8Array(12));
-    const encrypted = await crypto.subtle.encrypt(
-        { name: "AES-GCM", iv: iv }, derivedKey, enc.encode(JSON.stringify(sorok))
-    );
-
-    const finalArray = new Uint8Array(iv.length + encrypted.byteLength);
-    finalArray.set(iv, 0);
-    finalArray.set(new Uint8Array(encrypted), iv.length);
-
-    const b64Result = btoa(String.fromCharCode(...finalArray));
-    localStorage.setItem("pyspef_native_db", b64Result);
-
+    let b64Result = await pyodide.runPythonAsync("titkosit_uj_adat_str(py_pass, py_key, py_db, py_ujsor)");
+    
+    localStorage.setItem("pyspef_str_db", b64Result);
+    
     const tbody = document.querySelector("#vault-table tbody");
     tbody.innerHTML += `<tr><td>${escapeHtml(app)}</td><td>${escapeHtml(user)}</td><td>${escapeHtml(pass)}</td></tr>`;
 
     document.getElementById("app-name").value = "";
     document.getElementById("username").value = "";
     document.getElementById("gen-result").value = "";
-    alert("Adatok titkosítva és mentve!");
+    alert("Mentve a telefon biztonságos memóriájába!");
 }
 
 function exportBackup() {
-    const salt = localStorage.getItem("pyspef_native_salt");
-    const db = localStorage.getItem("pyspef_native_db");
-    const backupData = JSON.stringify({ salt, db });
+    const key = localStorage.getItem("pyspef_str_key");
+    const db = localStorage.getItem("pyspef_str_db");
+    const backupData = JSON.stringify({ key, db });
     
     const blob = new Blob([backupData], { type: "application/json" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = "jelszomanager_mentes.json";
+    a.download = "pyszef_biztonsagi_mentes.json";
     a.click();
 }
 
@@ -218,6 +285,8 @@ function escapeHtml(str) {
 if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').catch(err => console.log("SW hiba", err));
 }
+
+initPython();
 </script>
 </body>
 </html>
